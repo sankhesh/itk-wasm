@@ -86,7 +86,7 @@ jobs:
     - name: Test building a pipeline
       run: |
         cd test/MedianFilterPipeline
-        docker run --rm insighttoolkit/itk-js:${{ env.DOCKER_TAG }} > ./itk-js
+        docker run --rm insighttoolkit/itk-js:latest > ./itk-js
         chmod +x ./itk-js
         rm -rf web-build
         ./itk-js web-build
@@ -97,21 +97,44 @@ jobs:
       with:
         ipfs_version: ^0.8
 
-    - name: Pin testing data
+    - name: Prepare testing data for IPFS
+      run: |
+        mkdir -p itk-js-testing-data/latest
+        rsync -v -r --exclude=Objects --exclude='*-hash-stamp' ./build/ExternalData/ ./itk-js-testing-data/latest/
+        new_cid=$(ipfs add -r -Q --cid-version 1 --raw-leaves itk-js-testing-data)
+
+    - name: Pin testing data on Pinata
       if: github.ref == 'refs/heads/master'
       env:
         PINATA_JWT: ${{ secrets.PINATA_JWT }}
       run: |
-        mkdir itk-js-testing-data
-        rsync -v -r --exclude=Objects --exclude='*-hash-stamp' ./build/ExternalData/ ./itk-js-testing-data/
-        new_cid=$(ipfs add -r -Q --cid-version 1 --raw-leaves itk-js-testing-data)
-
         ipfs pin remote service add pinata https://api.pinata.cloud/psa "$PINATA_JWT"
         if ! ipfs pin remote ls --service=pinata --name=itk-js-testing-data | grep $new_cid; then
           ipfs pin remote add --service=pinata --name=itk-js-testing-data $new_cid
         else
           echo "CID ${new_cid} already pinned on Pinata."
         fi
+
+    - name: Add testing data to Textile Bucket
+      uses: textileio/github-action-buckets@master
+      id: bucket
+      with:
+        key: ${{ secrets.TEXTILE_ACCOUNT_KEY }}
+        secret: ${{ secrets.TEXTILE_ACCOUNT_SECRET }}
+        bucket: 'itk-js-testing-data'
+        thread: 'bafkyq3o2yq2wx6fe7lusdx6vd2rpwrfdr746qlbhcnukuf7yscz42fq'
+        path: './itk-js-testing-data/'
+      env:
+        HUB_ORG: 'isc'
+
+    - name: Echo bucket info
+      run: |
+        echo "ipfs: ${{ steps.bucket.outputs.ipfs }}"
+        echo "ipfs link: ${{ steps.bucket.outputs.ipfsUrl }}"
+        echo "ipns: ${{ steps.bucket.outputs.ipns }}"
+        echo "ipns link: ${{ steps.bucket.outputs.ipnsUrl }}"
+        echo "hub: ${{ steps.bucket.outputs.hub }}"
+        echo "www: ${{ steps.bucket.outputs.www }}"
 
     - name: Build and publish docs
       if: github.ref == 'refs/heads/master'
